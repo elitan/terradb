@@ -620,7 +620,10 @@ CREATE SEQUENCE custom_seq START 1000 INCREMENT 1;
 
 ## Development
 
-Requires [Bun](https://bun.sh):
+Requires [Bun](https://bun.sh) 1.4 or newer. Test scripts run files with
+`bun test --parallel`; each worker gets its own database on the configured
+server (`<database>_w<worker>`), and `tools/test-timings.json` balances
+workers and CI shards (refresh it with `bun run test:timings:update`).
 
 ```bash
 git clone https://github.com/elitan/terradb.git
