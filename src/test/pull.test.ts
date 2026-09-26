@@ -53,6 +53,12 @@ async function createExistingDatabase(client: Client): Promise<void> {
       RETURN NEW;
     END
     $fn$;
+    CREATE FUNCTION ${SCHEMA}.positive(value integer) RETURNS boolean
+      LANGUAGE sql IMMUTABLE LEAKPROOF STRICT PARALLEL SAFE COST 5
+      AS $fn$ SELECT value > 0 $fn$;
+    CREATE FUNCTION ${SCHEMA}.author_ids() RETURNS SETOF integer
+      LANGUAGE sql STABLE SECURITY DEFINER ROWS 20
+      AS $fn$ SELECT id FROM ${SCHEMA}.authors $fn$;
     CREATE TRIGGER posts_normalize BEFORE INSERT OR UPDATE ON ${SCHEMA}.posts
       FOR EACH ROW EXECUTE FUNCTION ${SCHEMA}.normalize_title();
 
@@ -126,6 +132,10 @@ describe("PostgreSQL pull", function () {
     expect(pulled.sql).toContain('"id" bigint GENERATED ALWAYS AS IDENTITY,');
     expect(pulled.sql).toContain('"bio" text STORAGE EXTERNAL');
     expect(pulled.sql).toContain(`OWNED BY ${SCHEMA}.authors.ticket;`);
+    expect(pulled.sql).toContain(
+      "LANGUAGE sql IMMUTABLE PARALLEL SAFE LEAKPROOF STRICT COST 5;"
+    );
+    expect(pulled.sql).toContain("LANGUAGE sql STABLE SECURITY DEFINER ROWS 20;");
     expect(pulled.sql).not.toContain("ALTER SEQUENCE");
     expect(pulled.sql).not.toContain("CREATE ROLE");
     expect(pulled.sql.indexOf('"z_visible_posts" ("id"')).toBeLessThan(
