@@ -250,6 +250,11 @@ foreign-server grant must declare the corresponding server so
 omission remains scoped after the grant is removed from desired SQL. A grant
 made by a non-owner grantor is rejected during inspection
 because it cannot be revoked safely without managing grantor provenance.
+The standard `public` schema's initdb state, `PUBLIC` usage (plus `CREATE` on
+PostgreSQL 14) and its `standard public schema` comment, is treated like an
+implicit default: it is reconciled only when the desired schema declares that
+grant or comment, so a first apply to a fresh database never revokes access to
+`public` or strips its stock comment.
 PostgreSQL default privileges are declarative for explicitly named `FOR ROLE`
 owners across tables, sequences, routines, types, and schemas. Global and
 `IN SCHEMA` declarations expand to stable atomic privileges, preserve negative

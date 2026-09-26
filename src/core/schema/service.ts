@@ -714,6 +714,28 @@ export class SchemaService {
     });
   }
 
+  /**
+   * initdb gives the standard public schema a stock comment. Like an implicit
+   * ACL entry, it is database bootstrap state rather than a managed comment,
+   * so it is reconciled only when the desired schema declares that comment.
+   */
+  private filterCurrentComments(
+    currentComments: ParsedSchema["comments"],
+    desiredComments: ParsedSchema["comments"]
+  ): ParsedSchema["comments"] {
+    if (this.provider.dialect !== "postgres") {
+      return currentComments;
+    }
+    const declaresPublicSchemaComment = desiredComments.some(isPublicSchemaComment);
+    if (declaresPublicSchemaComment) {
+      return currentComments;
+    }
+    return currentComments.filter(function isManagedComment(comment) {
+      return !isPublicSchemaComment(comment) ||
+        comment.comment !== POSTGRES_PUBLIC_SCHEMA_BOOTSTRAP_COMMENT;
+    });
+  }
+
   private filterCurrentExtensions(
     currentExtensions: Extension[],
     desiredExtensions: Extension[],
@@ -829,7 +851,10 @@ export class SchemaService {
     const currentSchemas = await this.provider.getCurrentSchemas(client, schemas);
     const currentComments = managementOptions.manageComments === false
       ? []
-      : await this.provider.getCurrentComments(client, schemas);
+      : this.filterCurrentComments(
+        await this.provider.getCurrentComments(client, schemas),
+        desiredComments
+      );
     const inspectedSqlObjects =
       await this.provider.getCurrentSqlObjects?.(client, schemas) || [];
     const currentSqlObjects = this.filterCurrentSqlObjects(
@@ -1891,6 +1916,12 @@ const POSTGRES_GENERATED_PROHIBITED_SYSTEM_COLUMNS = new Set([
   "xmax",
   "cmax",
 ]);
+
+const POSTGRES_PUBLIC_SCHEMA_BOOTSTRAP_COMMENT = "standard public schema";
+
+function isPublicSchemaComment(comment: ParsedSchema["comments"][number]): boolean {
+  return comment.objectType === "SCHEMA" && comment.objectName === "public";
+}
 
 function isPostgresViewDrop(statement: string): boolean {
   return /^DROP\s+(?:MATERIALIZED\s+)?VIEW\b/i.test(statement.trim());
