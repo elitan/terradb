@@ -250,6 +250,20 @@ describe("Handler module coverage", () => {
       expect(statements[1]).toContain("OWNED BY public.users.id");
     });
 
+    test("declares ownership inline when rendering a desired schema", () => {
+      const handler = new SequenceHandler();
+      const plan = handler.generateStatementPlan(
+        [makeSequence({ name: "owned_seq", ownedBy: "public.users.id" })],
+        [],
+        { renderDesiredSchema: true }
+      );
+
+      expect(plan.afterTables).toEqual([]);
+      expect(plan.beforeTables).toHaveLength(1);
+      expect(plan.beforeTables[0]).toContain('CREATE SEQUENCE "owned_seq"');
+      expect(plan.beforeTables[0]).toEndWith("OWNED BY public.users.id;");
+    });
+
     test("structures sequence operations around table changes", function () {
       const handler = new SequenceHandler();
       const createAndDropPlan = handler.generateStatementPlan(

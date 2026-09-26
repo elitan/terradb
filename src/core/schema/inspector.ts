@@ -4391,13 +4391,30 @@ export class DatabaseInspector {
           privilege.is_grantable,
           pg_get_userbyid(privilege.grantor) as grantor_name,
           pg_get_userbyid(n.nspowner) as owner_name,
-          EXISTS (
-            SELECT 1
-            FROM aclexplode(acldefault('n', n.nspowner)) default_privilege
-            WHERE default_privilege.grantor = privilege.grantor
-              AND default_privilege.grantee = privilege.grantee
-              AND default_privilege.privilege_type = privilege.privilege_type
-              AND default_privilege.is_grantable = privilege.is_grantable
+          (
+            EXISTS (
+              SELECT 1
+              FROM aclexplode(acldefault('n', n.nspowner)) default_privilege
+              WHERE default_privilege.grantor = privilege.grantor
+                AND default_privilege.grantee = privilege.grantee
+                AND default_privilege.privilege_type = privilege.privilege_type
+                AND default_privilege.is_grantable = privilege.is_grantable
+            )
+            OR (
+              -- initdb grants PUBLIC access to the standard public schema:
+              -- USAGE on PostgreSQL 15+, and USAGE plus CREATE before 15.
+              n.nspname = 'public'
+              AND privilege.grantee = 0
+              AND privilege.grantor = n.nspowner
+              AND NOT privilege.is_grantable
+              AND (
+                privilege.privilege_type = 'USAGE'
+                OR (
+                  privilege.privilege_type = 'CREATE'
+                  AND current_setting('server_version_num')::integer < 150000
+                )
+              )
+            )
           ) as is_implicit_default
         FROM pg_namespace n
         JOIN LATERAL aclexplode(n.nspacl) as privilege ON n.nspacl IS NOT NULL
@@ -4687,7 +4704,13 @@ export class DatabaseInspector {
 
     const identity = this.buildIdentityColumn(row);
     if (identity) {
-      parts.push(renderIdentityClause(identity));
+      // Partitioned tables are always logged, and PostgreSQL 14 rejects an
+      // explicit LOGGED identity option, so the default is left implicit.
+      parts.push(renderIdentityClause(
+        identity.sequencePersistence === "logged"
+          ? { ...identity, sequencePersistence: undefined }
+          : identity
+      ));
       return parts.join(" ");
     }
 

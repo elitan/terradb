@@ -79,3 +79,13 @@ export interface CliApplyOutput {
   statements: CliPlanStatements;
   statementMetadata: CliStatementMetadata[];
 }
+
+export interface CliPullOutput {
+  schemaVersion: number;
+  command: "pull";
+  dialect: DatabaseDialect;
+  file: string | null;
+  schemas: string[];
+  statementCount: number;
+  sql: string;
+}

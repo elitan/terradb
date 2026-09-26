@@ -14,6 +14,13 @@ export interface MigrationContext {
   currentUser?: string;
   sessionUser?: string;
   constraintValidationManaged?: boolean;
+  /**
+   * Render creation statements in the form a desired schema declares them,
+   * rather than in executable migration order: column storage and
+   * compression inline in CREATE TABLE, and sequence ownership inline in
+   * CREATE SEQUENCE.
+   */
+  renderDesiredSchema?: boolean;
 }
 
 export interface MigrationOptions {

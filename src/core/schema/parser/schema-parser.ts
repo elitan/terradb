@@ -2338,6 +2338,7 @@ export class SchemaParser {
     const object = this.buildSqlObject("range-type", stmt, name, schema);
     return {
       ...object,
+      createStatement: this.deparseRangeStatement(stmt),
       typeDefinition: {
         kind: "range",
         subtype: extractDataType(subtype),
@@ -2364,6 +2365,29 @@ export class SchemaParser {
         ),
       },
     };
+  }
+
+  /**
+   * The deparser renders a `pg_catalog`-qualified range option such as
+   * `collation = pg_catalog."C"` without quoting the object name, which
+   * PostgreSQL then folds to a different, usually missing, name. Other
+   * qualifiers are quoted correctly, so the catalog schema is deparsed
+   * under a placeholder and restored afterwards.
+   */
+  private deparseRangeStatement(stmt: any): string {
+    const placeholder = "terradb_pg_catalog_placeholder";
+    const copy = structuredClone(stmt);
+    for (const item of copy?.CreateRangeStmt?.params || []) {
+      const parameter = item?.DefElem;
+      const names = parameter?.defname === "subtype"
+        ? undefined
+        : parameter?.arg?.TypeName?.names;
+      const qualifier = names?.length === 2 ? names[0]?.String : undefined;
+      if (qualifier?.sval === "pg_catalog") {
+        qualifier.sval = placeholder;
+      }
+    }
+    return this.statementToSql(copy).split(`${placeholder}.`).join("pg_catalog.");
   }
 
   private parseRangeQualifiedOption(

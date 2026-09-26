@@ -266,6 +266,13 @@ describe("SQL generators coverage", () => {
     expect(fnSQL).toContain("ROWS 5");
     expect(fnSQL).toContain("SET application_name TO 'routine''s app'");
     expect(fnSQL).toContain("SET search_path TO 'pg_catalog', 'Case Schema'");
+    expect(fnSQL).toContain("AS $$BEGIN RETURN 1; END$$ LANGUAGE plpgsql");
+    expect(
+      generateCreateFunctionSQL({ ...fn, body: "SELECT value$" })
+    ).toContain("AS $$SELECT value$ $$ LANGUAGE plpgsql");
+    expect(
+      generateCreateFunctionSQL({ ...fn, body: "SELECT '$$' || x$terradb" })
+    ).toContain("AS $terradb$SELECT '$$' || x$terradb $terradb$ LANGUAGE plpgsql");
     expect(generateCreateOrReplaceFunctionSQL(fn)).toStartWith(
       'CREATE OR REPLACE FUNCTION "audit"."compute"'
     );

@@ -1269,6 +1269,15 @@ describe("Advanced SQL object parsing", function () {
         multirangeTypeName: { schema: "audit", name: "price_windows" },
       },
     });
+    expect(parsed.sqlObjects?.[1]?.createStatement).toContain(
+      'collation = pg_catalog."C"'
+    );
+    expect(parsed.sqlObjects?.[1]?.createStatement).toContain(
+      "subtype_opclass = pg_catalog.numeric_ops"
+    );
+    expect(parsed.sqlObjects?.[1]?.createStatement).not.toContain(
+      "terradb_pg_catalog_placeholder"
+    );
   });
 
   test("rejects duplicate and unsupported domain or range clauses", async function () {

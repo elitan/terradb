@@ -267,8 +267,13 @@ export function normalizeDefault(value: string | null | undefined): string | und
   );
   normalized = normalized.replace(typeCastSuffix, '');
 
-  // Handle CAST(expr AS type) syntax
-  const castMatch = normalized.match(/^CAST\((.+)\s+AS\s+[a-z_]+(\[\])?\)$/i);
+  // Handle CAST(expr AS type) syntax with the same type forms as the suffix.
+  const castSyntax = new RegExp(
+    `^CAST\\((.+)\\s+AS\\s+${identifier}(?:\\s*\\.\\s*${identifier})?` +
+      `(?:\\s+${identifier})*(?:\\([^)]*\\))?(?:\\[\\])*\\)$`,
+    "i"
+  );
+  const castMatch = normalized.match(castSyntax);
   if (castMatch) {
     normalized = castMatch[1]!.trim();
   }
@@ -523,8 +528,26 @@ export function columnsAreDifferent(desired: Column, current: Column): boolean {
   return false;
 }
 
-export function generateColumnDefinition(column: Column): string {
+export interface TableDefinitionOptions {
+  /** Render column STORAGE and COMPRESSION inline, as a desired schema declares them. */
+  inlineColumnPhysical?: boolean;
+}
+
+export function generateColumnDefinition(
+  column: Column,
+  options: TableDefinitionOptions = {}
+): string {
   const builder = new SQLBuilder().ident(column.name).p(column.type);
+
+  if (options.inlineColumnPhysical) {
+    const physical = getColumnPhysicalChanges(column);
+    if (physical.storage) {
+      builder.p(`STORAGE ${physical.storage}`);
+    }
+    if (physical.compression) {
+      builder.p(`COMPRESSION ${physical.compression}`);
+    }
+  }
 
   if (column.collation) {
     builder.p(`COLLATE ${renderCollationName(column.collation)}`);
@@ -542,8 +565,13 @@ export function generateColumnDefinition(column: Column): string {
   return builder.build();
 }
 
-export function generateCreateTableStatement(table: Table): string {
-  const columnDefs = table.columns.map(generateColumnDefinition);
+export function generateCreateTableStatement(
+  table: Table,
+  options: TableDefinitionOptions = {}
+): string {
+  const columnDefs = table.columns.map(function renderColumn(column) {
+    return generateColumnDefinition(column, options);
+  });
 
   // Add primary key constraint if it exists
   if (table.primaryKey) {
@@ -1172,6 +1200,22 @@ function appendRoutineConfiguration(
   }
 }
 
+/**
+ * Chooses a dollar-quote tag that cannot terminate early: a body may itself
+ * contain `$$` when its desired definition used a tagged quote. PostgreSQL
+ * stores the quoted text verbatim, so the body is not padded; a separator is
+ * added only when the body's final characters would merge with the closing
+ * tag.
+ */
+function dollarQuoteRoutineBody(body: string): string {
+  let tag = "$$";
+  for (let suffix = 0; body.includes(tag); suffix++) {
+    tag = suffix === 0 ? "$terradb$" : `$terradb_${suffix}$`;
+  }
+  const closesAtTag = `${body}${tag}`.indexOf(tag) === body.length;
+  return `${tag}${body}${closesAtTag ? "" : " "}${tag}`;
+}
+
 function generateFunctionSQL(func: Function, orReplace: boolean): string {
   const builder = new SQLBuilder();
 
@@ -1194,7 +1238,7 @@ function generateFunctionSQL(func: Function, orReplace: boolean): string {
 
   builder.p(')');
   builder.p(`RETURNS ${func.returnType}`);
-  builder.p(`AS $$ ${func.body} $$`);
+  builder.p(`AS ${dollarQuoteRoutineBody(func.body)}`);
   builder.p(`LANGUAGE ${func.language}`);
 
   if (func.volatility) {
@@ -1285,7 +1329,7 @@ function generateProcedureSQL(proc: Procedure, orReplace: boolean): string {
 
   builder.p(')');
   builder.p(`LANGUAGE ${proc.language}`);
-  builder.p(`AS $$ ${proc.body} $$`);
+  builder.p(`AS ${dollarQuoteRoutineBody(proc.body)}`);
 
   if (proc.securityDefiner) {
     builder.p('SECURITY DEFINER');

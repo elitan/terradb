@@ -115,3 +115,20 @@ export class StrictModeError extends TerraError {
     this.name = 'StrictModeError';
   }
 }
+
+/**
+ * Pull errors - a generated schema file does not reproduce the database
+ */
+export class PullVerificationError extends TerraError {
+  constructor(
+    message: string,
+    public statements: string[]
+  ) {
+    super(
+      'PULL_VERIFICATION_ERROR',
+      message,
+      { statements }
+    );
+    this.name = 'PullVerificationError';
+  }
+}
