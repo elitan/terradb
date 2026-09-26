@@ -4704,7 +4704,13 @@ export class DatabaseInspector {
 
     const identity = this.buildIdentityColumn(row);
     if (identity) {
-      parts.push(renderIdentityClause(identity));
+      // Partitioned tables are always logged, and PostgreSQL 14 rejects an
+      // explicit LOGGED identity option, so the default is left implicit.
+      parts.push(renderIdentityClause(
+        identity.sequencePersistence === "logged"
+          ? { ...identity, sequencePersistence: undefined }
+          : identity
+      ));
       return parts.join(" ");
     }
 
