@@ -968,6 +968,91 @@ function generateMaterializedViewPopulationStatements(
   return statements;
 }
 
+function collectRelationReferences(node: unknown, references: Set<string>, defaultSchema: string): void {
+  if (Array.isArray(node)) {
+    for (const item of node) {
+      collectRelationReferences(item, references, defaultSchema);
+    }
+    return;
+  }
+  if (!node || typeof node !== "object") {
+    return;
+  }
+  const rangeVar = (node as { RangeVar?: { relname?: string; schemaname?: string } }).RangeVar;
+  if (rangeVar?.relname) {
+    references.add(`${rangeVar.schemaname || defaultSchema}.${rangeVar.relname}`);
+  }
+  for (const value of Object.values(node)) {
+    collectRelationReferences(value, references, defaultSchema);
+  }
+}
+
+function getPostgresViewReferences(view: View): Set<string> {
+  const references = new Set<string>();
+  try {
+    collectRelationReferences(
+      parseSync(view.definition),
+      references,
+      view.schema || "public"
+    );
+  } catch {
+    return references;
+  }
+  return references;
+}
+
+/**
+ * Orders views so that every view follows the views it selects from, or,
+ * for removals, precedes them. Views are otherwise kept in input order, and
+ * a view whose definition cannot be parsed or that belongs to a cycle keeps
+ * its relative position after the resolvable views.
+ */
+function orderPostgresViewsByDependencies(
+  views: View[],
+  direction: "dependencies-first" | "dependents-first"
+): View[] {
+  const keys = new Set(views.map(getViewKey));
+  const edges = new Map<string, Set<string>>();
+  for (const view of views) {
+    const key = getViewKey(view);
+    const references = getPostgresViewReferences(view);
+    for (const reference of references) {
+      if (reference === key || !keys.has(reference)) {
+        continue;
+      }
+      const [before, after] = direction === "dependencies-first"
+        ? [reference, key]
+        : [key, reference];
+      const prerequisites = edges.get(after) ?? new Set<string>();
+      prerequisites.add(before);
+      edges.set(after, prerequisites);
+    }
+  }
+  if (edges.size === 0) {
+    return views;
+  }
+
+  const ordered: View[] = [];
+  const emitted = new Set<string>();
+  const remaining = [...views];
+  while (remaining.length > 0) {
+    const index = remaining.findIndex(function isReady(view) {
+      const prerequisites = edges.get(getViewKey(view));
+      return !prerequisites || [...prerequisites].every(function isEmitted(key) {
+        return emitted.has(key);
+      });
+    });
+    if (index === -1) {
+      ordered.push(...remaining);
+      break;
+    }
+    const [view] = remaining.splice(index, 1);
+    ordered.push(view!);
+    emitted.add(getViewKey(view!));
+  }
+  return ordered;
+}
+
 export class ViewHandler {
   generateStatements(
     desiredViews: View[],
@@ -983,8 +1068,12 @@ export class ViewHandler {
       validateMaterializedViewStatistics(desiredViews);
     }
     const statements = generateStatements(
-      desiredViews,
-      currentViews,
+      usesCreateStatements
+        ? desiredViews
+        : orderPostgresViewsByDependencies(desiredViews, "dependencies-first"),
+      usesCreateStatements
+        ? currentViews
+        : orderPostgresViewsByDependencies(currentViews, "dependents-first"),
       usesCreateStatements
         ? createSQLiteConfig(sqliteIdentifiers)
         : createPostgresConfig(context)
