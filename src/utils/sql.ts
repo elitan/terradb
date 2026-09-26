@@ -1172,6 +1172,18 @@ function appendRoutineConfiguration(
   }
 }
 
+/**
+ * Chooses a dollar-quote tag that cannot terminate early: a body may itself
+ * contain `$$` when its desired definition used a tagged quote.
+ */
+function dollarQuoteRoutineBody(body: string): string {
+  let tag = "$$";
+  for (let suffix = 0; body.includes(tag); suffix++) {
+    tag = suffix === 0 ? "$terradb$" : `$terradb_${suffix}$`;
+  }
+  return `${tag} ${body} ${tag}`;
+}
+
 function generateFunctionSQL(func: Function, orReplace: boolean): string {
   const builder = new SQLBuilder();
 
@@ -1194,7 +1206,7 @@ function generateFunctionSQL(func: Function, orReplace: boolean): string {
 
   builder.p(')');
   builder.p(`RETURNS ${func.returnType}`);
-  builder.p(`AS $$ ${func.body} $$`);
+  builder.p(`AS ${dollarQuoteRoutineBody(func.body)}`);
   builder.p(`LANGUAGE ${func.language}`);
 
   if (func.volatility) {
@@ -1285,7 +1297,7 @@ function generateProcedureSQL(proc: Procedure, orReplace: boolean): string {
 
   builder.p(')');
   builder.p(`LANGUAGE ${proc.language}`);
-  builder.p(`AS $$ ${proc.body} $$`);
+  builder.p(`AS ${dollarQuoteRoutineBody(proc.body)}`);
 
   if (proc.securityDefiner) {
     builder.p('SECURITY DEFINER');
