@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import type { Client } from "pg";
 import { PullVerificationError } from "../types/errors";
+import { Logger } from "../utils/logger";
 import { cleanDatabase, createTestClient, createTestSchemaService } from "./utils";
 
 const SCHEMA = "pull_contract";
@@ -175,6 +176,30 @@ describe("PostgreSQL pull", function () {
       "INSERT INTO pull_events (bucket) VALUES (5) RETURNING id"
     );
     expect(inserted.rows[0].id).toBe(7);
+  });
+
+  test("does not print planner progress while pulling", async function () {
+    await client.query(`
+      CREATE TABLE pull_quiet (id integer PRIMARY KEY);
+      CREATE VIEW pull_quiet_ids AS SELECT id FROM pull_quiet;
+      COMMENT ON TABLE pull_quiet IS 'quiet';
+    `);
+    const service = createTestSchemaService();
+    const wasSilent = Logger.isSilent();
+    const originalLog = console.log;
+    const lines: unknown[][] = [];
+    Logger.setSilent(false);
+    console.log = function capture(...args: unknown[]) {
+      lines.push(args);
+    };
+    try {
+      await service.pull(["public"]);
+      expect(Logger.isSilent()).toBe(false);
+    } finally {
+      console.log = originalLog;
+      Logger.setSilent(wasSilent);
+    }
+    expect(lines).toEqual([]);
   });
 
   test("pulls an empty managed schema as a header-only file", async function () {

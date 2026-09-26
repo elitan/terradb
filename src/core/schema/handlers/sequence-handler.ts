@@ -220,7 +220,7 @@ function splitOwnedByTarget(target: string): string[] {
 
 function generateCreateSequencePlan(
   sequence: Sequence,
-  inlineOwnership: boolean = false
+  inlineOwnership: boolean
 ): SequenceStatementPlan {
   if (inlineOwnership) {
     return {

@@ -76,13 +76,11 @@ function splitQualifiedName(value: string): string[] {
 function collapseSerialColumns(state: ParsedSchema): ParsedSchema {
   const collapsedColumnKeys = new Set<string>();
   const tables = state.tables.map(function collapseTable(table) {
-    let changed = false;
     const columns = table.columns.map(function collapseColumn(column) {
       const serialType = SERIAL_TYPE_BY_INTEGER_TYPE[column.type.toLowerCase()];
       if (!column.serial || !column.serialSequenceOptionsMatch || !serialType) {
         return column;
       }
-      changed = true;
       collapsedColumnKeys.add(getColumnKey(table, column));
       const {
         default: _default,
@@ -93,7 +91,7 @@ function collapseSerialColumns(state: ParsedSchema): ParsedSchema {
       } = column;
       return { ...rest, type: serialType, nullable: false };
     });
-    return changed ? { ...table, columns } : table;
+    return { ...table, columns };
   });
 
   const sequences = state.sequences.filter(function isStandalone(sequence) {
@@ -113,7 +111,6 @@ function omitDefaultIdentityOptions(
   table: Table,
   context: MigrationContext
 ): Table {
-  let changed = false;
   const columns = table.columns.map(function normalizeColumn(column) {
     if (!column.identity) {
       return column;
@@ -146,10 +143,9 @@ function omitDefaultIdentityOptions(
     ) {
       delete identity.sequenceName;
     }
-    changed = true;
     return { ...column, identity };
   });
-  return changed ? { ...table, columns } : table;
+  return { ...table, columns };
 }
 
 function omitDefaultAccessMethod<T extends Table | View>(
