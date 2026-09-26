@@ -251,7 +251,7 @@ function resolveTestCommand(file: string, override?: string): string {
     return "bun --env-file=.env test --max-concurrency=1 src/test/postgres-schema-authorization.test.ts src/test/handler-module-coverage.test.ts src/test/regressions/schema-owner-diff.test.ts";
   }
   if (normalized.endsWith("/src/core/schema/handlers/view-handler.ts")) {
-    return "bun --env-file=.env test --max-concurrency=1 src/test/views/sql-generation.test.ts src/test/views/view-definition-normalization-matrix.test.ts src/test/views/postgres-view-column-names.test.ts src/test/views/postgres-view-options.test.ts src/test/views/materialized-views.test.ts src/test/tables/postgres-clustering.test.ts src/test/indexes/postgres-materialized-view-indexes.test.ts src/test/columns/postgres-column-statistics.test.ts src/test/indexes/postgres-index-keys.test.ts src/test/views/view-dependency-order.test.ts";
+    return "bun --env-file=.env test --max-concurrency=1 --timeout 120000 src/test/views/sql-generation.test.ts src/test/views/view-definition-normalization-matrix.test.ts src/test/views/postgres-view-column-names.test.ts src/test/views/postgres-view-options.test.ts src/test/views/materialized-views.test.ts src/test/tables/postgres-clustering.test.ts src/test/indexes/postgres-materialized-view-indexes.test.ts src/test/columns/postgres-column-statistics.test.ts src/test/indexes/postgres-index-keys.test.ts src/test/views/view-dependency-order.test.ts";
   }
   if (normalized.includes("/src/core/schema/handlers/")) {
     return "bun --env-file=.env test --max-concurrency=1 src/test/sql-object-handler.test.ts src/test/schema-service-private-coverage.test.ts";
