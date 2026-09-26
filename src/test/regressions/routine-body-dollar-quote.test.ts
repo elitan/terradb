@@ -51,4 +51,23 @@ describe("Regression: routine bodies containing dollar quotes", function () {
     expect(replaced.rows[0].value).toBe("$terradb$ second $$");
     expect((await service.plan(schema("$terradb$ second $$"))).hasChanges).toBe(false);
   });
+
+  test("stores routine bodies exactly as declared", async function () {
+    const body = "\n  SELECT 'unpadded'::text\n";
+    const schema = `CREATE FUNCTION exact_body() RETURNS text LANGUAGE sql AS $$${body}$$;`;
+
+    await service.apply(schema, ["public"], true);
+    const stored = await client.query(
+      "SELECT prosrc FROM pg_proc WHERE proname = 'exact_body'"
+    );
+    expect(stored.rows[0].prosrc).toBe(body);
+
+    const replacement = schema.replace("unpadded", "replaced");
+    await service.apply(replacement, ["public"], true);
+    const replaced = await client.query(
+      "SELECT prosrc FROM pg_proc WHERE proname = 'exact_body'"
+    );
+    expect(replaced.rows[0].prosrc).toBe(body.replace("unpadded", "replaced"));
+    await client.query("DROP FUNCTION exact_body()");
+  });
 });

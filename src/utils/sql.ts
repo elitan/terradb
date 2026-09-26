@@ -1179,14 +1179,18 @@ function appendRoutineConfiguration(
 
 /**
  * Chooses a dollar-quote tag that cannot terminate early: a body may itself
- * contain `$$` when its desired definition used a tagged quote.
+ * contain `$$` when its desired definition used a tagged quote. PostgreSQL
+ * stores the quoted text verbatim, so the body is not padded; a separator is
+ * added only when the body's final characters would merge with the closing
+ * tag.
  */
 function dollarQuoteRoutineBody(body: string): string {
   let tag = "$$";
   for (let suffix = 0; body.includes(tag); suffix++) {
     tag = suffix === 0 ? "$terradb$" : `$terradb_${suffix}$`;
   }
-  return `${tag} ${body} ${tag}`;
+  const closesAtTag = `${body}${tag}`.indexOf(tag) === body.length;
+  return `${tag}${body}${closesAtTag ? "" : " "}${tag}`;
 }
 
 function generateFunctionSQL(func: Function, orReplace: boolean): string {
