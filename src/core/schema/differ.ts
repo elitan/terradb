@@ -1370,10 +1370,14 @@ export class SchemaDiffer {
             return !deferredFKSet.has(key);
           })
         };
-        statements.push(generateCreateTableStatement(filteredTable));
+        statements.push(
+          generateCreateTableStatement(filteredTable, {
+            inlineColumnPhysical: context.renderDesiredSchema === true,
+          })
+        );
 
         const physicalAlterations: TableAlteration[] = [];
-        for (const column of filteredTable.columns) {
+        for (const column of context.renderDesiredSchema ? [] : filteredTable.columns) {
           this.collectColumnPhysicalAlterations(
             column,
             undefined,

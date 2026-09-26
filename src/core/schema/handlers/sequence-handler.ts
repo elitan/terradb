@@ -218,7 +218,16 @@ function splitOwnedByTarget(target: string): string[] {
   return segments;
 }
 
-function generateCreateSequencePlan(sequence: Sequence): SequenceStatementPlan {
+function generateCreateSequencePlan(
+  sequence: Sequence,
+  inlineOwnership: boolean = false
+): SequenceStatementPlan {
+  if (inlineOwnership) {
+    return {
+      beforeTables: [generateCreateSequenceSQL(sequence)],
+      afterTables: [],
+    };
+  }
   const createSequence = sequence.ownedBy
     ? { ...sequence, ownedBy: undefined }
     : sequence;
@@ -398,7 +407,10 @@ export class SequenceHandler {
       const currentSequence = currentMap.get(key);
 
       if (!currentSequence) {
-        const createPlan = generateCreateSequencePlan(desiredSequence);
+        const createPlan = generateCreateSequencePlan(
+          desiredSequence,
+          context.renderDesiredSchema === true
+        );
         plan.beforeTables.push(...createPlan.beforeTables);
         plan.afterTables.push(...createPlan.afterTables);
         Logger.info(`Creating sequence '${key}'`);

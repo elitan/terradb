@@ -37,6 +37,7 @@ safe rejection.
 | row-level security and policies | 14–18 | not an SQLite feature | `src/test/postgres-row-security.test.ts` | policy expressions are compared lexically safely; unmanaged policies are preserved |
 | SQLite virtual tables: FTS5 and RTree | not applicable | 3.45.1 with required compile features | `src/test/sqlite/virtual-tables.test.ts`, `src/test/sqlite/runtime-contract.test.ts` | implementation-owned shadow tables stay unmanaged; unavailable runtime features fail the runtime contract |
 | CLI plan/apply contract: JSON schema, deterministic ordering, categories, risk, exit/error behavior | 14–18 | 3.45.1 | `src/test/cli/cli-contract.test.ts`, `src/test/migration-executor-coverage.test.ts`, `src/test/properties/destructive-diff-classification.property.test.ts` | successful plan/apply JSON is byte-snapshotted through creation and empty re-plan; all advertised PostgreSQL object families retain a managed category and lexical-safe risk in ordered metadata; strict mode and error JSON are also contract-tested |
+| CLI pull: generate a desired schema from an existing database, verified by re-planning it against that database before anything is written | 14–18 | 3.45.1 | `src/test/pull.test.ts`, `src/test/sqlite/pull.test.ts`, `src/test/cli/pull-cli.test.ts` | the pulled scope is exactly what an empty desired schema would reconcile; a file that would still plan changes fails with `PULL_VERIFICATION_ERROR` and is not written; existing files are replaced only with `--overwrite` |
 
 ## deliberate exclusions that fail safely
 

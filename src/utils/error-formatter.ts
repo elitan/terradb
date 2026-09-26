@@ -10,6 +10,7 @@ import {
   ParserError,
   MigrationError,
   DependencyError,
+  PullVerificationError,
   ValidationError,
 } from "../types/errors";
 
@@ -32,6 +33,10 @@ export class ErrorFormatter {
 
     if (error instanceof ValidationError) {
       return this.formatValidationError(error);
+    }
+
+    if (error instanceof PullVerificationError) {
+      return this.formatPullVerificationError(error);
     }
 
     if (error instanceof TerraError) {
@@ -184,6 +189,36 @@ export class ErrorFormatter {
       }
     }
 
+    lines.push("");
+
+    return lines.join("\n");
+  }
+
+  /**
+   * Format pull verification errors with the drift that remained
+   */
+  private static formatPullVerificationError(error: PullVerificationError): string {
+    const lines: string[] = [];
+
+    lines.push("");
+    lines.push(chalk.red.bold("Pull Verification Error"));
+    lines.push("");
+    lines.push(this.wrapText(error.message, "  "));
+
+    if (error.statements.length > 0) {
+      lines.push("");
+      lines.push(chalk.gray("  Remaining changes:"));
+      for (const statement of error.statements) {
+        lines.push(chalk.gray(`    ${statement.split("\n").join("\n    ")}`));
+      }
+    }
+
+    lines.push("");
+    lines.push(
+      chalk.gray(
+        "  No file was written. The database contains state that TerraDB cannot yet express losslessly as a desired schema."
+      )
+    );
     lines.push("");
 
     return lines.join("\n");

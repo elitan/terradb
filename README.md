@@ -42,9 +42,32 @@ terradb plan -f schema.sql
 terradb apply -f schema.sql
 ```
 
+### Existing databases
+
+```bash
+terradb pull -f schema.sql   # write the current schema as CREATE statements
+terradb plan -f schema.sql   # "No changes needed"
+```
+
+`pull` generates the desired schema for a database you already have, so you
+can start managing it without hand-writing a file that exactly matches
+production. Before anything is written, TerraDB parses the generated file and
+plans it against the same database; if that plan is not empty, `pull` fails
+with the remaining changes and writes nothing. A pulled file is therefore a
+verified no-op baseline: applying it right away changes nothing.
+
+The file contains exactly the objects that `plan` and `apply` manage, for the
+same `--schema` scope and `--ignore-*` flags. Cluster-wide roles, grants
+PostgreSQL creates implicitly, extension members, and undeclared foreign
+servers stay out of it, just as they stay out of a plan. Canonical `serial`
+expansions are written back as `SERIAL`, and options equal to PostgreSQL's
+defaults are omitted so the file reads like hand-written DDL. Without `-f`,
+the schema is printed to standard output; an existing file is replaced only
+with `--overwrite`.
+
 ## How It Works
 
-1. Write your desired schema as CREATE statements
+1. Write your desired schema as CREATE statements (or `terradb pull` them)
 2. Run `terradb plan` to see what changes are needed
 3. Run `terradb apply` to execute the changes
 
@@ -523,6 +546,9 @@ terradb apply -f custom.sql     # Apply from custom file
 terradb plan -f schema.sql --format json
 terradb apply -f schema.sql --dry-run --format json
 terradb apply -f schema.sql --no-color
+terradb pull                     # Print the current schema
+terradb pull -f schema.sql       # Write it to a file (--overwrite to replace)
+terradb pull -s app --format json
 ```
 
 ## Examples

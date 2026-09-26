@@ -597,6 +597,36 @@ describe("SchemaDiffer private coverage", () => {
     expect(safePlan.transactional[0]).toContain("SET (fillfactor=80)");
   });
 
+  test("renders new-table column storage inline for desired schemas", function () {
+    const differ = new SchemaDiffer();
+    const table = makeTable({
+      columns: [
+        makeColumn(),
+        makeColumn({
+          name: "payload",
+          type: "TEXT",
+          nullable: true,
+          storage: "EXTERNAL",
+          compression: "lz4",
+        }),
+      ],
+    });
+
+    const migration = differ.generateMigrationPlan([table], []);
+    expect(migration.transactional).toHaveLength(2);
+    expect(migration.transactional[0]).toContain('"payload" TEXT\n');
+    expect(migration.transactional[1]).toContain('SET STORAGE EXTERNAL');
+    expect(migration.transactional[1]).toContain('SET COMPRESSION lz4');
+
+    const desired = differ.generateMigrationPlan([table], [], {
+      renderDesiredSchema: true,
+    });
+    expect(desired.transactional).toHaveLength(1);
+    expect(desired.transactional[0]).toContain(
+      '"payload" TEXT STORAGE EXTERNAL COMPRESSION lz4'
+    );
+  });
+
   test("isolates identity CYCLE without splitting NO CYCLE changes", function () {
     const differ = new SchemaDiffer();
     const baseIdentity = {

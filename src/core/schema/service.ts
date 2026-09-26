@@ -1,6 +1,10 @@
 import type { MigrationPlan } from "../../types/migration";
 import { deparseSync, parseSync } from "pgsql-parser";
-import { StrictModeError, ValidationError } from "../../types/errors";
+import {
+  PullVerificationError,
+  StrictModeError,
+  ValidationError,
+} from "../../types/errors";
 import type {
   DatabaseProvider,
   DatabaseClient,
@@ -39,6 +43,17 @@ import {
   type PostgresTypeStatement,
 } from "./handlers/postgres-type-ordering";
 import { toPgAstNode } from "./parser/pgsql-ast";
+import {
+  createEmptySchemaState,
+  normalizePulledSchema,
+  renderPulledSchema,
+  toDesiredStatements,
+} from "./pull";
+
+export interface PullResult {
+  sql: string;
+  statements: string[];
+}
 
 export interface SchemaManagementOptions {
   manageComments?: boolean;
@@ -354,6 +369,162 @@ export class SchemaService {
         await this.provider.releaseAdvisoryLock(client, lockOptions.lockName);
       }
       await client.end();
+    }
+  }
+
+  /**
+   * Generates a desired schema that reproduces the managed state of the
+   * database. The result is verified by planning it against the same
+   * database, so a pulled file never implies a change on its first apply.
+   */
+  async pull(
+    schemas: string[] = ['public'],
+    managementOptions: SchemaManagementOptions = {}
+  ): Promise<PullResult> {
+    const client = await this.provider.createClient(this.config);
+    const wasSilent = Logger.isSilent();
+    Logger.setSilent(true);
+
+    try {
+      const inspected = await this.inspectCurrentState(
+        client,
+        schemas,
+        managementOptions
+      );
+      const managed = normalizePulledSchema(
+        this.selectManagedState(inspected, schemas),
+        this.provider.dialect,
+        {
+          context: await this.provider.getMigrationContext?.(client),
+          bootstrapPublicSchemaOwners:
+            await this.getBootstrapPublicSchemaOwners(client),
+        }
+      );
+      const creation = await this.buildCombinedPlan(
+        client,
+        managed,
+        schemas,
+        managementOptions,
+        createEmptySchemaState(),
+        true
+      );
+      const statements = toDesiredStatements([
+        ...(creation.plan.preTransactional ?? []),
+        ...creation.plan.transactional,
+        ...creation.plan.concurrent,
+        ...creation.plan.deferred,
+      ]);
+      const sql = renderPulledSchema(statements, {
+        dialect: this.provider.dialect,
+        schemas,
+      });
+
+      await this.verifyPulledSchema(
+        client,
+        sql,
+        schemas,
+        managementOptions,
+        inspected
+      );
+
+      return { sql, statements };
+    } finally {
+      Logger.setSilent(wasSilent);
+      await client.end();
+    }
+  }
+
+  /**
+   * initdb makes the public schema owned by pg_database_owner on PostgreSQL
+   * 15 and later, and by the bootstrap superuser before that.
+   */
+  private async getBootstrapPublicSchemaOwners(
+    client: DatabaseClient
+  ): Promise<string[]> {
+    if (this.provider.dialect !== "postgres") {
+      return [];
+    }
+    const result = await client.query<{ name: string }>(
+      "SELECT pg_get_userbyid(10) AS name"
+    );
+    return ["pg_database_owner", ...result.rows.map(function getName(row) {
+      return row.name;
+    })];
+  }
+
+  /**
+   * The managed state is exactly what an empty desired schema would remove:
+   * cluster-global objects, implicit ACL entries, and extension members stay
+   * outside the pulled model just as they stay outside a plan.
+   */
+  private selectManagedState(
+    inspected: ParsedSchema,
+    schemas: string[]
+  ): ParsedSchema {
+    return {
+      ...inspected,
+      extensions: this.filterCurrentExtensions(
+        inspected.extensions,
+        [],
+        schemas
+      ),
+      comments: this.filterCurrentComments(inspected.comments, []),
+      sqlObjects: this.filterCurrentSqlObjects(
+        inspected.sqlObjects || [],
+        [],
+        []
+      ),
+    };
+  }
+
+  private async verifyPulledSchema(
+    client: DatabaseClient,
+    sql: string,
+    schemas: string[],
+    managementOptions: SchemaManagementOptions,
+    inspected: ParsedSchema
+  ): Promise<void> {
+    let parsed: ParsedSchema;
+    try {
+      parsed = await this.provider.parseSchema(sql);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      throw new PullVerificationError(
+        `The generated schema could not be parsed as a desired schema: ${message}`,
+        []
+      );
+    }
+
+    const validation = this.provider.validateSchema(parsed);
+    if (!validation.valid) {
+      throw new PullVerificationError(
+        "The generated schema failed validation for the source database",
+        validation.errors.map(function describe(error) {
+          return `${error.code}: ${error.message}`;
+        })
+      );
+    }
+
+    const desired = this.provider.supportsFeature("schemas")
+      ? this.filterUnmanagedSchemas(schemas, parsed)
+      : parsed;
+    const replan = await this.buildCombinedPlan(
+      client,
+      desired,
+      schemas,
+      managementOptions,
+      inspected
+    );
+    if (replan.totalChanges > 0) {
+      throw new PullVerificationError(
+        "The generated schema does not reproduce the database: planning it against the source database still produces changes",
+        [
+          ...replan.preTransactionalPreview,
+          ...replan.transactionalPreview,
+          ...replan.concurrentPreview,
+          ...replan.deferredPreview,
+        ]
+      );
     }
   }
 
@@ -800,11 +971,59 @@ export class SchemaService {
     });
   }
 
+  /**
+   * Reads every object family the planner reconciles, honoring the
+   * management options that exclude comments or privileges from the model.
+   */
+  private async inspectCurrentState(
+    client: DatabaseClient,
+    schemas: string[],
+    managementOptions: SchemaManagementOptions = {}
+  ): Promise<ParsedSchema> {
+    const tables = await this.provider.getCurrentSchema(client, schemas);
+    const enums = await this.provider.getCurrentEnums(client, schemas);
+    const compositeTypes = await this.provider.getCurrentCompositeTypes?.(client, schemas) || [];
+    const views = await this.provider.getCurrentViews(client, schemas);
+    const functions = await this.provider.getCurrentFunctions(client, schemas);
+    const procedures = await this.provider.getCurrentProcedures(client, schemas);
+    const triggers = await this.provider.getCurrentTriggers(client, schemas);
+    const sequences = await this.provider.getCurrentSequences(client, schemas);
+    const getCurrentExtensions = this.provider.getCurrentExtensions.bind(this.provider);
+    const extensions = await getCurrentExtensions(client, schemas);
+    const currentSchemas = await this.provider.getCurrentSchemas(client, schemas);
+    const comments = managementOptions.manageComments === false
+      ? []
+      : await this.provider.getCurrentComments(client, schemas);
+    const inspectedSqlObjects =
+      await this.provider.getCurrentSqlObjects?.(client, schemas) || [];
+    const sqlObjects = inspectedSqlObjects.filter(function isManagedSqlObject(object) {
+      return managementOptions.managePrivileges !== false ||
+        (object.kind !== "grant" && object.kind !== "default-privilege");
+    });
+
+    return {
+      tables,
+      enums,
+      compositeTypes,
+      views,
+      functions,
+      procedures,
+      triggers,
+      sequences,
+      extensions,
+      schemas: currentSchemas,
+      comments,
+      sqlObjects,
+    };
+  }
+
   private async buildCombinedPlan(
     client: DatabaseClient,
     filtered: ParsedSchema,
     schemas: string[],
-    managementOptions: SchemaManagementOptions = {}
+    managementOptions: SchemaManagementOptions = {},
+    currentState?: ParsedSchema,
+    renderDesiredSchema: boolean = false
   ): Promise<{
     plan: MigrationPlan;
     totalChanges: number;
@@ -833,35 +1052,28 @@ export class SchemaService {
       }
     );
 
-    const currentSchema = await this.provider.getCurrentSchema(client, schemas);
-    const currentEnums = await this.provider.getCurrentEnums(client, schemas);
-    const currentCompositeTypes = await this.provider.getCurrentCompositeTypes?.(client, schemas) || [];
-    const currentViews = await this.provider.getCurrentViews(client, schemas);
-    const currentFunctions = await this.provider.getCurrentFunctions(client, schemas);
-    const currentProcedures = await this.provider.getCurrentProcedures(client, schemas);
-    const currentTriggers = await this.provider.getCurrentTriggers(client, schemas);
-    const currentSequences = await this.provider.getCurrentSequences(client, schemas);
-    const getCurrentExtensions = this.provider.getCurrentExtensions.bind(this.provider);
-    const inspectedExtensions = await getCurrentExtensions(client, schemas);
+    const inspected = currentState ??
+      await this.inspectCurrentState(client, schemas, managementOptions);
+    const currentSchema = inspected.tables;
+    const currentEnums = inspected.enums;
+    const currentCompositeTypes = inspected.compositeTypes || [];
+    const currentViews = inspected.views;
+    const currentFunctions = inspected.functions;
+    const currentProcedures = inspected.procedures;
+    const currentTriggers = inspected.triggers;
+    const currentSequences = inspected.sequences;
     const currentExtensions = this.filterCurrentExtensions(
-      inspectedExtensions,
+      inspected.extensions,
       desiredExtensions,
       schemas
     );
-    const currentSchemas = await this.provider.getCurrentSchemas(client, schemas);
-    const currentComments = managementOptions.manageComments === false
-      ? []
-      : this.filterCurrentComments(
-        await this.provider.getCurrentComments(client, schemas),
-        desiredComments
-      );
-    const inspectedSqlObjects =
-      await this.provider.getCurrentSqlObjects?.(client, schemas) || [];
+    const currentSchemas = inspected.schemas;
+    const currentComments = this.filterCurrentComments(
+      inspected.comments,
+      desiredComments
+    );
     const currentSqlObjects = this.filterCurrentSqlObjects(
-      inspectedSqlObjects.filter(function isManagedSqlObject(object) {
-        return managementOptions.managePrivileges !== false ||
-          (object.kind !== "grant" && object.kind !== "default-privilege");
-      }),
+      inspected.sqlObjects || [],
       desiredSqlObjects,
       desiredSchemas
     );
@@ -878,6 +1090,7 @@ export class SchemaService {
       ...inspectedMigrationContext,
       constraintValidationManaged:
         managementOptions.manageConstraintValidation !== false,
+      ...(renderDesiredSchema ? { renderDesiredSchema } : {}),
     };
     if (this.provider.dialect === "postgres") {
       const desiredTypeModifierSchema = {

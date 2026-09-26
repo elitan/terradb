@@ -40,6 +40,12 @@ export const mutationRiskManifest: MutationRiskManifest = {
       reason: "applies plans and controls lock/prompt/strict behavior",
     },
     {
+      path: "src/core/schema/pull.ts",
+      owner: "core-service",
+      level: "high",
+      reason: "pulled schemas become the desired state that later applies reconcile against",
+    },
+    {
       path: "src/core/schema/parser",
       owner: "core-parser",
       level: "high",

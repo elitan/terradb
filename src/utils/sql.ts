@@ -528,8 +528,26 @@ export function columnsAreDifferent(desired: Column, current: Column): boolean {
   return false;
 }
 
-export function generateColumnDefinition(column: Column): string {
+export interface TableDefinitionOptions {
+  /** Render column STORAGE and COMPRESSION inline, as a desired schema declares them. */
+  inlineColumnPhysical?: boolean;
+}
+
+export function generateColumnDefinition(
+  column: Column,
+  options: TableDefinitionOptions = {}
+): string {
   const builder = new SQLBuilder().ident(column.name).p(column.type);
+
+  if (options.inlineColumnPhysical) {
+    const physical = getColumnPhysicalChanges(column);
+    if (physical.storage) {
+      builder.p(`STORAGE ${physical.storage}`);
+    }
+    if (physical.compression) {
+      builder.p(`COMPRESSION ${physical.compression}`);
+    }
+  }
 
   if (column.collation) {
     builder.p(`COLLATE ${renderCollationName(column.collation)}`);
@@ -547,8 +565,13 @@ export function generateColumnDefinition(column: Column): string {
   return builder.build();
 }
 
-export function generateCreateTableStatement(table: Table): string {
-  const columnDefs = table.columns.map(generateColumnDefinition);
+export function generateCreateTableStatement(
+  table: Table,
+  options: TableDefinitionOptions = {}
+): string {
+  const columnDefs = table.columns.map(function renderColumn(column) {
+    return generateColumnDefinition(column, options);
+  });
 
   // Add primary key constraint if it exists
   if (table.primaryKey) {
