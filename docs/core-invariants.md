@@ -44,3 +44,9 @@
 1. type aliases that are semantically equal must not produce diffs.
 2. precision/scale compatible forms must normalize deterministically.
 3. normalization must be stable across pg14 to pg18.
+
+## pull
+
+1. a pulled schema must plan zero changes against its source database.
+2. pull must write nothing when that verification fails, and must not replace an existing file without `--overwrite`.
+3. the pulled scope must equal what an empty desired schema would reconcile for the same schemas and management flags.
