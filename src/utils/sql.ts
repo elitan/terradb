@@ -267,8 +267,13 @@ export function normalizeDefault(value: string | null | undefined): string | und
   );
   normalized = normalized.replace(typeCastSuffix, '');
 
-  // Handle CAST(expr AS type) syntax
-  const castMatch = normalized.match(/^CAST\((.+)\s+AS\s+[a-z_]+(\[\])?\)$/i);
+  // Handle CAST(expr AS type) syntax with the same type forms as the suffix.
+  const castSyntax = new RegExp(
+    `^CAST\\((.+)\\s+AS\\s+${identifier}(?:\\s*\\.\\s*${identifier})?` +
+      `(?:\\s+${identifier})*(?:\\([^)]*\\))?(?:\\[\\])*\\)$`,
+    "i"
+  );
+  const castMatch = normalized.match(castSyntax);
   if (castMatch) {
     normalized = castMatch[1]!.trim();
   }

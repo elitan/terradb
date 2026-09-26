@@ -48,6 +48,19 @@ describe("normalizeDefault", () => {
     ).toBe("'can''t wait'");
   });
 
+  test("should strip CAST syntax with the same type forms as the suffix", () => {
+    expect(normalizeDefault("CAST('medium' AS app.priority)")).toBe(
+      normalizeDefault("'medium'::app.priority")
+    );
+    expect(
+      normalizeDefault("CAST('can''t wait' AS \"enum lifecycle\".\"priority type\")")
+    ).toBe("'can''t wait'");
+    expect(normalizeDefault("CAST(1.5 AS double precision)")).toBe(
+      normalizeDefault("1.5::double precision")
+    );
+    expect(normalizeDefault("CAST('x' AS varchar(10))")).toBe("'x'");
+  });
+
   test("should strip ::numeric type cast with params", () => {
     expect(normalizeDefault("0.00::numeric(10,2)")).toBe("0.00");
   });
