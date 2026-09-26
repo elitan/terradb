@@ -1,0 +1,2 @@
+[test]
+preload = ["./src/test/support/parser-wasm.ts", "./src/test/support/worker-database.ts"]
