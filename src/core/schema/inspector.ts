@@ -269,6 +269,11 @@ const COMPOSITE_TYPE_DEPENDENCY_CTE_SQL = `
     FROM pg_type target_type
     JOIN pg_namespace type_namespace
       ON type_namespace.oid = target_type.typnamespace
+    -- Relation row types are also typtype 'c'; only standalone composite
+    -- types are reported, so tracing table row types is wasted work.
+    JOIN pg_class target_relation
+      ON target_relation.oid = target_type.typrelid
+      AND target_relation.relkind = 'c'
     WHERE type_namespace.nspname = ANY($1::text[])
       AND target_type.typtype = 'c'
   ), dependent_types AS (

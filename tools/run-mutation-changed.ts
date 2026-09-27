@@ -1,6 +1,7 @@
 import { execFileSync, execSync } from "node:child_process";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, relative, resolve } from "node:path";
+import { parseShard, selectShardCandidates } from "./mutation-shard";
 
 type CliOptions = {
   baselinePath: string;
@@ -8,6 +9,7 @@ type CliOptions = {
   maxPerFile: number;
   timeoutMs: number;
   testCommandOverride?: string;
+  shard?: { index: number; count: number };
 };
 
 type BaselineFileAssessment = {
@@ -73,6 +75,8 @@ type MutationReport = {
   durationMs: number;
   files: string[];
   diffRef: string | null;
+  shard: string | null;
+  allCandidates: number;
   results: MutationResult[];
 };
 
@@ -148,6 +152,11 @@ function parseArgs(argv: string[]): CliOptions {
       index += 1;
       continue;
     }
+    if (name === "shard") {
+      options.shard = parseShard(value);
+      index += 1;
+      continue;
+    }
     throw new Error(`Unknown argument --${name}`);
   }
 
@@ -206,61 +215,61 @@ function resolveTestCommand(file: string, override?: string): string {
     normalized.endsWith("/tools/run-mutation-changed.ts") ||
     normalized.endsWith("/tools/check-mutation-gate.ts")
   ) {
-    return "bun --env-file=.env test src/test/mutation-tools.test.ts";
+    return "bun --env-file=.env test --parallel src/test/mutation-tools.test.ts";
   }
   if (normalized.endsWith("/src/core/schema/service.ts")) {
-    return "bun --env-file=.env test --max-concurrency=1 --timeout 120000 src/test/schema-service-private-coverage.test.ts src/test/pull.test.ts src/test/postgres-public-schema-bootstrap.test.ts src/test/sqlite/pull.test.ts";
+    return "bun --env-file=.env test --parallel --max-concurrency=1 --timeout 120000 src/test/schema-service-private-coverage.test.ts src/test/pull.test.ts src/test/postgres-public-schema-bootstrap.test.ts src/test/sqlite/pull.test.ts";
   }
   if (normalized.endsWith("/src/core/schema/pull.ts")) {
-    return "bun --env-file=.env test --max-concurrency=1 --timeout 120000 src/test/pull.test.ts src/test/sqlite/pull.test.ts";
+    return "bun --env-file=.env test --parallel --max-concurrency=1 --timeout 120000 src/test/pull.test.ts src/test/sqlite/pull.test.ts";
   }
   if (normalized.endsWith("/src/core/schema/differ.ts")) {
-    return "bun --env-file=.env test --max-concurrency=1 --timeout 120000 src/test/schema-differ-private-coverage.test.ts src/test/columns/postgres-generated-function-dependency.test.ts";
+    return "bun --env-file=.env test --parallel --max-concurrency=1 --timeout 120000 src/test/schema-differ-private-coverage.test.ts src/test/columns/postgres-generated-function-dependency.test.ts";
   }
   if (normalized.endsWith("/src/core/schema/parser/sequence-parser.ts")) {
-    return "bun --env-file=.env test --max-concurrency=1 src/test/sequences/sequence-parsing.test.ts src/test/parser-module-coverage.test.ts";
+    return "bun --env-file=.env test --parallel --max-concurrency=1 src/test/sequences/sequence-parsing.test.ts src/test/parser-module-coverage.test.ts";
   }
   if (normalized.includes("/src/core/schema/parser")) {
-    return "bun --env-file=.env test --max-concurrency=1 --timeout 120000 src/test/schema-parser-private-coverage.test.ts src/test/postgres-comments-lossless.test.ts src/test/postgres-schema-authorization.test.ts src/test/postgres-extension-dependencies.test.ts src/test/parser-edge-coverage.test.ts src/test/parser-gap-coverage.test.ts src/test/parser-object-matrix-parity.test.ts src/test/parser-module-coverage.test.ts src/test/function-parser-private-coverage.test.ts src/test/procedure-parser-coverage.test.ts src/test/composite-type-parser-coverage.test.ts src/test/constraint-parser-coverage.test.ts src/test/table-parser-coverage.test.ts src/test/views/view-parsing.test.ts src/test/triggers/basic-triggers.test.ts src/test/postgres-unsupported-statements.test.ts src/test/tables/postgres-table-persistence.test.ts src/test/columns/postgres-column-statistics.test.ts src/test/indexes/postgres-index-keys.test.ts src/test/advanced-sql-object-parsing.test.ts src/test/postgres-foreign-server-lifecycle.test.ts";
+    return "bun --env-file=.env test --parallel --max-concurrency=1 --timeout 120000 src/test/schema-parser-private-coverage.test.ts src/test/postgres-comments-lossless.test.ts src/test/postgres-schema-authorization.test.ts src/test/postgres-extension-dependencies.test.ts src/test/parser-edge-coverage.test.ts src/test/parser-gap-coverage.test.ts src/test/parser-object-matrix-parity.test.ts src/test/parser-module-coverage.test.ts src/test/function-parser-private-coverage.test.ts src/test/procedure-parser-coverage.test.ts src/test/composite-type-parser-coverage.test.ts src/test/constraint-parser-coverage.test.ts src/test/table-parser-coverage.test.ts src/test/views/view-parsing.test.ts src/test/triggers/basic-triggers.test.ts src/test/postgres-unsupported-statements.test.ts src/test/tables/postgres-table-persistence.test.ts src/test/columns/postgres-column-statistics.test.ts src/test/indexes/postgres-index-keys.test.ts src/test/advanced-sql-object-parsing.test.ts src/test/postgres-foreign-server-lifecycle.test.ts";
   }
   if (normalized.endsWith("/src/core/schema/handlers/enum-handler.ts")) {
-    return "bun --env-file=.env test --max-concurrency=1 src/test/enums/enum-handler-schema-scope.test.ts src/test/enums/postgres-enum-evolution.test.ts src/test/enums/postgres-enum-dependencies.test.ts src/test/types/enum-types.test.ts src/test/types/postgres-type-ordering.test.ts";
+    return "bun --env-file=.env test --parallel --max-concurrency=1 src/test/enums/enum-handler-schema-scope.test.ts src/test/enums/postgres-enum-evolution.test.ts src/test/enums/postgres-enum-dependencies.test.ts src/test/types/enum-types.test.ts src/test/types/postgres-type-ordering.test.ts";
   }
   if (normalized.includes("/src/core/schema/handlers/composite-type-")) {
-    return "bun --env-file=.env test --max-concurrency=1 src/test/types/composite-type-evolution.test.ts src/test/types/composite-types.test.ts src/test/composite-type-parser-coverage.test.ts src/test/types/postgres-type-ordering.test.ts src/test/enums/postgres-enum-dependencies.test.ts src/test/types/postgres-type-catalog-dependencies.test.ts";
+    return "bun --env-file=.env test --parallel --max-concurrency=1 src/test/types/composite-type-evolution.test.ts src/test/types/composite-types.test.ts src/test/composite-type-parser-coverage.test.ts src/test/types/postgres-type-ordering.test.ts src/test/enums/postgres-enum-dependencies.test.ts src/test/types/postgres-type-catalog-dependencies.test.ts";
   }
   if (normalized.endsWith("/src/core/schema/handlers/postgres-type-dependency-safety.ts")) {
-    return "bun --env-file=.env test --max-concurrency=1 src/test/enums/postgres-enum-dependencies.test.ts src/test/types/domain-range-lifecycle.test.ts src/test/types/composite-type-evolution.test.ts src/test/types/postgres-type-catalog-dependencies.test.ts";
+    return "bun --env-file=.env test --parallel --max-concurrency=1 src/test/enums/postgres-enum-dependencies.test.ts src/test/types/domain-range-lifecycle.test.ts src/test/types/composite-type-evolution.test.ts src/test/types/postgres-type-catalog-dependencies.test.ts";
   }
   if (normalized.endsWith("/src/core/schema/handlers/postgres-type-ordering.ts")) {
-    return "bun --env-file=.env test --max-concurrency=1 src/test/types/postgres-type-ordering.test.ts src/test/types/domain-range-lifecycle.test.ts src/test/types/composite-type-evolution.test.ts";
+    return "bun --env-file=.env test --parallel --max-concurrency=1 src/test/types/postgres-type-ordering.test.ts src/test/types/domain-range-lifecycle.test.ts src/test/types/composite-type-evolution.test.ts";
   }
   if (normalized.endsWith("/src/core/schema/handlers/postgres-type-object-handler.ts")) {
-    return "bun --env-file=.env test --max-concurrency=1 src/test/types/domain-range-lifecycle.test.ts src/test/types/postgres-type-catalog-dependencies.test.ts src/test/sql-object-handler.test.ts src/test/advanced-sql-object-parsing.test.ts";
+    return "bun --env-file=.env test --parallel --max-concurrency=1 src/test/types/domain-range-lifecycle.test.ts src/test/types/postgres-type-catalog-dependencies.test.ts src/test/sql-object-handler.test.ts src/test/advanced-sql-object-parsing.test.ts";
   }
   if (normalized.endsWith("/src/core/schema/handlers/sql-object-handler.ts")) {
-    return "bun --env-file=.env test --max-concurrency=1 src/test/sql-object-handler.test.ts src/test/schema-service-private-coverage.test.ts src/test/postgres-advanced-drop-safety.test.ts src/test/postgres-foreign-server-lifecycle.test.ts src/test/types/domain-range-lifecycle.test.ts src/test/types/postgres-type-ordering.test.ts";
+    return "bun --env-file=.env test --parallel --max-concurrency=1 src/test/sql-object-handler.test.ts src/test/schema-service-private-coverage.test.ts src/test/postgres-advanced-drop-safety.test.ts src/test/postgres-foreign-server-lifecycle.test.ts src/test/types/domain-range-lifecycle.test.ts src/test/types/postgres-type-ordering.test.ts";
   }
   if (normalized.endsWith("/src/core/schema/handlers/sequence-handler.ts")) {
-    return "bun --env-file=.env test --max-concurrency=1 --timeout 120000 src/test/handler-module-coverage.test.ts";
+    return "bun --env-file=.env test --parallel --max-concurrency=1 --timeout 120000 src/test/handler-module-coverage.test.ts";
   }
   if (normalized.endsWith("/src/core/schema/handlers/extension-handler.ts")) {
-    return "bun --env-file=.env test --max-concurrency=1 src/test/postgres-extension-dependencies.test.ts src/test/handler-module-coverage.test.ts src/test/regressions/extension-schema-diff.test.ts src/test/regressions/extension-version-diff.test.ts";
+    return "bun --env-file=.env test --parallel --max-concurrency=1 src/test/postgres-extension-dependencies.test.ts src/test/handler-module-coverage.test.ts src/test/regressions/extension-schema-diff.test.ts src/test/regressions/extension-version-diff.test.ts";
   }
   if (normalized.endsWith("/src/core/schema/handlers/schema-handler.ts")) {
-    return "bun --env-file=.env test --max-concurrency=1 src/test/postgres-schema-authorization.test.ts src/test/handler-module-coverage.test.ts src/test/regressions/schema-owner-diff.test.ts";
+    return "bun --env-file=.env test --parallel --max-concurrency=1 src/test/postgres-schema-authorization.test.ts src/test/handler-module-coverage.test.ts src/test/regressions/schema-owner-diff.test.ts";
   }
   if (normalized.endsWith("/src/core/schema/handlers/view-handler.ts")) {
-    return "bun --env-file=.env test --max-concurrency=1 --timeout 120000 src/test/views/sql-generation.test.ts src/test/views/view-definition-normalization-matrix.test.ts src/test/views/postgres-view-column-names.test.ts src/test/views/postgres-view-options.test.ts src/test/views/materialized-views.test.ts src/test/tables/postgres-clustering.test.ts src/test/indexes/postgres-materialized-view-indexes.test.ts src/test/columns/postgres-column-statistics.test.ts src/test/indexes/postgres-index-keys.test.ts src/test/views/view-dependency-order.test.ts";
+    return "bun --env-file=.env test --parallel --max-concurrency=1 --timeout 120000 src/test/views/sql-generation.test.ts src/test/views/view-definition-normalization-matrix.test.ts src/test/views/postgres-view-column-names.test.ts src/test/views/postgres-view-options.test.ts src/test/views/materialized-views.test.ts src/test/tables/postgres-clustering.test.ts src/test/indexes/postgres-materialized-view-indexes.test.ts src/test/columns/postgres-column-statistics.test.ts src/test/indexes/postgres-index-keys.test.ts src/test/views/view-dependency-order.test.ts";
   }
   if (normalized.includes("/src/core/schema/handlers/")) {
-    return "bun --env-file=.env test --max-concurrency=1 src/test/sql-object-handler.test.ts src/test/schema-service-private-coverage.test.ts";
+    return "bun --env-file=.env test --parallel --max-concurrency=1 src/test/sql-object-handler.test.ts src/test/schema-service-private-coverage.test.ts";
   }
   if (normalized.endsWith("/src/core/schema/inspector.ts")) {
-    return "bun --env-file=.env test --max-concurrency=1 --timeout 120000 src/test/inspector-coverage.test.ts src/test/inspector-version-snapshots.test.ts src/test/postgres-extension-dependencies.test.ts src/test/postgres-advanced-drop-safety.test.ts src/test/postgres-foreign-server-lifecycle.test.ts src/test/advanced-sql-object-inspector.test.ts src/test/types/composite-type-evolution.test.ts src/test/types/domain-range-lifecycle.test.ts src/test/enums/postgres-enum-dependencies.test.ts src/test/types/postgres-type-catalog-dependencies.test.ts";
+    return "bun --env-file=.env test --parallel --max-concurrency=1 --timeout 120000 src/test/inspector-coverage.test.ts src/test/inspector-version-snapshots.test.ts src/test/postgres-extension-dependencies.test.ts src/test/postgres-advanced-drop-safety.test.ts src/test/postgres-foreign-server-lifecycle.test.ts src/test/advanced-sql-object-inspector.test.ts src/test/types/composite-type-evolution.test.ts src/test/types/domain-range-lifecycle.test.ts src/test/enums/postgres-enum-dependencies.test.ts src/test/types/postgres-type-catalog-dependencies.test.ts";
   }
   if (normalized.endsWith("/src/providers/sqlite/index.ts")) {
-    return "bun --env-file=.env test --max-concurrency=1 src/test/sqlite/table-recreation.test.ts src/test/sqlite/validation.test.ts";
+    return "bun --env-file=.env test --parallel --max-concurrency=1 src/test/sqlite/table-recreation.test.ts src/test/sqlite/validation.test.ts";
   }
   if (
     normalized.endsWith("/src/providers/sqlite/differ.ts") ||
@@ -273,21 +282,21 @@ function resolveTestCommand(file: string, override?: string): string {
     return "bun run test:sqlite";
   }
   if (normalized.endsWith("/src/providers/postgres/connection.ts")) {
-    return "bun --env-file=.env test --max-concurrency=1 src/test/postgres-connection-strings.test.ts src/test/database-config.test.ts";
+    return "bun --env-file=.env test --parallel --max-concurrency=1 src/test/postgres-connection-strings.test.ts src/test/database-config.test.ts";
   }
   if (normalized.endsWith("/src/utils/sql.ts")) {
-    return "bun --env-file=.env test --max-concurrency=1 src/test/utils/sql-generators-coverage.test.ts src/test/utils/sql-utils.test.ts src/test/types/composite-type-evolution.test.ts";
+    return "bun --env-file=.env test --parallel --max-concurrency=1 src/test/utils/sql-generators-coverage.test.ts src/test/utils/sql-utils.test.ts src/test/types/composite-type-evolution.test.ts";
   }
   if (normalized.endsWith("/src/utils/statement-classifier.ts")) {
-    return "bun --env-file=.env test --max-concurrency=1 --timeout 120000 src/test/properties/destructive-diff-classification.property.test.ts src/test/cli/cli-contract.test.ts src/test/types/composite-type-evolution.test.ts";
+    return "bun --env-file=.env test --parallel --max-concurrency=1 --timeout 120000 src/test/properties/destructive-diff-classification.property.test.ts src/test/cli/cli-contract.test.ts src/test/types/composite-type-evolution.test.ts";
   }
   if (normalized.endsWith("/src/utils/expression-comparator.ts")) {
-    return "bun --env-file=.env test --max-concurrency=1 src/test/utils/expression-comparator-coverage.test.ts src/test/postgres-expression-literal-semantics.test.ts";
+    return "bun --env-file=.env test --parallel --max-concurrency=1 src/test/utils/expression-comparator-coverage.test.ts src/test/postgres-expression-literal-semantics.test.ts";
   }
   if (normalized.endsWith("/src/utils/postgres-foreign-server.ts")) {
-    return "bun --env-file=.env test --max-concurrency=1 src/test/postgres-foreign-server-lifecycle.test.ts src/test/advanced-sql-object-parsing.test.ts src/test/sql-object-handler.test.ts src/test/advanced-sql-object-inspector.test.ts";
+    return "bun --env-file=.env test --parallel --max-concurrency=1 src/test/postgres-foreign-server-lifecycle.test.ts src/test/advanced-sql-object-parsing.test.ts src/test/sql-object-handler.test.ts src/test/advanced-sql-object-inspector.test.ts";
   }
-  return "bun --env-file=.env test --max-concurrency=1 src/test/schema-service-private-coverage.test.ts";
+  return "bun --env-file=.env test --parallel --max-concurrency=1 src/test/schema-service-private-coverage.test.ts";
 }
 
 function isChangedLine(
@@ -527,6 +536,11 @@ function main(): void {
     candidates.push(...fileCandidates);
   }
 
+  const allCandidateCount = candidates.length;
+  const shardCandidates = selectShardCandidates(candidates, options.shard);
+  candidates.length = 0;
+  candidates.push(...shardCandidates);
+
   if (candidates.length > 0) {
     const commands = uniqueCommands(candidates);
     for (const command of commands) {
@@ -576,6 +590,8 @@ function main(): void {
     durationMs: Date.now() - startedAt,
     files: targetFiles,
     diffRef: baseline.diffRef || null,
+    shard: options.shard ? `${options.shard.index}/${options.shard.count}` : null,
+    allCandidates: allCandidateCount,
     results,
   };
 
@@ -583,4 +599,6 @@ function main(): void {
   printSummary(report, options.reportPath);
 }
 
-main();
+if (import.meta.main) {
+  main();
+}

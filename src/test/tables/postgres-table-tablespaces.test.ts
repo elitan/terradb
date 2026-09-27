@@ -30,10 +30,10 @@ describe("PostgreSQL table tablespaces", function () {
       await cleanDatabase(setupClient);
       await setupClient.query(`DROP TABLESPACE IF EXISTS ${TEST_TABLESPACE}`);
       await setupClient.query(
-        `COPY (SELECT '') TO PROGRAM 'rm -rf ${TEST_TABLESPACE_PATH}'`
+        `COPY (SELECT 1 WHERE false) TO PROGRAM 'rm -rf ${TEST_TABLESPACE_PATH}'`
       );
       await setupClient.query(
-        `COPY (SELECT '') TO PROGRAM 'mkdir -p ${TEST_TABLESPACE_PATH}'`
+        `COPY (SELECT 1 WHERE false) TO PROGRAM 'mkdir -p ${TEST_TABLESPACE_PATH}'`
       );
       await setupClient.query(
         `CREATE TABLESPACE ${TEST_TABLESPACE} LOCATION '${TEST_TABLESPACE_PATH}'`
@@ -59,7 +59,7 @@ describe("PostgreSQL table tablespaces", function () {
       await cleanDatabase(cleanupClient);
       await cleanupClient.query(`DROP TABLESPACE IF EXISTS ${TEST_TABLESPACE}`);
       await cleanupClient.query(
-        `COPY (SELECT '') TO PROGRAM 'rm -rf ${TEST_TABLESPACE_PATH}'`
+        `COPY (SELECT 1 WHERE false) TO PROGRAM 'rm -rf ${TEST_TABLESPACE_PATH}'`
       );
     } finally {
       await cleanupClient.end();

@@ -19,6 +19,8 @@ type SummarizedReport = {
 
 type NativeMutationReport = {
   diffRef: string | null;
+  shard?: string | null;
+  allCandidates?: number;
   results: Array<{
     command: string;
     line: number;
@@ -59,7 +61,8 @@ function summarizeEscapedMutants(input: unknown): SummarizedReport {
 }
 
 function runChangedLineMutationScenario(
-  mode: "changed" | "deleted" | "whole-file"
+  mode: "changed" | "deleted" | "whole-file",
+  extraArgs: string[] = []
 ): NativeMutationReport {
   const temporaryDirectory = realpathSync(
     mkdtempSync(join(tmpdir(), "terradb-mutation-runner-"))
@@ -142,6 +145,7 @@ test("keeps the expected changed literal", function () {
         "10",
         "--timeout-ms",
         "30000",
+        ...extraArgs,
       ],
       {
         cwd: temporaryDirectory,
@@ -295,6 +299,21 @@ test("changed mutation candidates stay inside added and modified lines", functio
   })).toEqual([1, 2, 3]);
 });
 
+test("mutation runner --shard runs only its slice of the candidates", function () {
+  const first = runChangedLineMutationScenario("whole-file", ["--shard", "1/2"]);
+  const second = runChangedLineMutationScenario("whole-file", ["--shard", "2/2"]);
+
+  expect(first.shard).toBe("1/2");
+  expect(first.allCandidates).toBe(3);
+  expect(first.results.map(function (result) {
+    return result.line;
+  })).toEqual([1]);
+  expect(second.shard).toBe("2/2");
+  expect(second.results.map(function (result) {
+    return result.line;
+  })).toEqual([2, 3]);
+});
+
 test("mutation gate resolves clean-checkout base and head refs", function () {
   const pullRequestReport = runMutationGate([], {
     MUTATION_BASE_REF: "HEAD",
@@ -323,4 +342,75 @@ test("mutation gate resolves clean-checkout base and head refs", function () {
     "--files",
     "src/core/schema/differ.ts",
   ], {}).diffRef).toBeNull();
+});
+
+test("mutation shards partition candidates by command without overlap", async function () {
+  const { parseShard, selectShardCandidates } = await import("../../tools/mutation-shard");
+  const candidates = [
+    { id: "b#1", command: "test b" },
+    { id: "a#1", command: "test a" },
+    { id: "b#2", command: "test b" },
+    { id: "a#2", command: "test a" },
+    { id: "c#1", command: "test c" },
+  ];
+
+  const shards = [1, 2, 3].map(function select(index) {
+    return selectShardCandidates(candidates, { index, count: 3 });
+  });
+
+  expect(shards.map(function ids(shard) {
+    return shard.map(function id(candidate) {
+      return candidate.id;
+    });
+  })).toEqual([["a#1"], ["a#2", "b#1"], ["b#2", "c#1"]]);
+  expect(shards.flat()).toHaveLength(candidates.length);
+  expect(selectShardCandidates(candidates, undefined)).toEqual(candidates);
+  expect(parseShard("2/4")).toEqual({ index: 2, count: 4 });
+  expect(function invalidShard() {
+    return parseShard("5/4");
+  }).toThrow('Invalid shard "5/4"');
+});
+
+test("merged mutation reports score every shard and reject missing shards", async function () {
+  const { mergeMutationReports } = await import("../../tools/merge-mutation-reports");
+  function shardReport(shard: string, results: Array<{ id: string; status: "killed" | "survived" }>) {
+    return {
+      totalTargetFiles: 2,
+      maxPerFile: 4,
+      timeoutMs: 1000,
+      durationMs: 10,
+      files: ["a.ts", "b.ts"],
+      diffRef: "base...head",
+      shard,
+      allCandidates: 3,
+      results: results.map(function withDuration(result) {
+        return { ...result, durationMs: 1 };
+      }),
+    };
+  }
+
+  const merged = mergeMutationReports([
+    shardReport("1/2", [{ id: "a#1", status: "killed" }]),
+    shardReport("2/2", [
+      { id: "a#2", status: "survived" },
+      { id: "b#1", status: "killed" },
+    ]),
+  ]);
+  expect(merged).toMatchObject({ totalMutants: 3, killed: 2, survived: 1 });
+  expect(merged.score).toBeCloseTo(66.67, 2);
+
+  expect(function missingShard() {
+    return mergeMutationReports([
+      shardReport("1/2", [{ id: "a#1", status: "killed" }]),
+    ]);
+  }).toThrow("Expected one report per shard");
+  expect(function duplicatedMutant() {
+    return mergeMutationReports([
+      shardReport("1/2", [{ id: "a#1", status: "killed" }]),
+      shardReport("2/2", [
+        { id: "a#1", status: "killed" },
+        { id: "b#1", status: "killed" },
+      ]),
+    ]);
+  }).toThrow("appears in more than one shard report");
 });

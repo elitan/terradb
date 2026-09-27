@@ -31,6 +31,13 @@ changed-file mutation runner:
 7. when a git diff reference is available, candidates are selected only from added or modified hunk lines; deletion-only hunks produce no candidates
 8. reports include the exact `diffRef` used and each selected mutant's final-file line and column
 
+sharding:
+
+1. `run-mutation-changed.ts --shard k/N` runs a contiguous, command-ordered slice of the candidates, so shards preflight as few distinct commands as possible
+2. `bun run test:mutation:changed:report --shard k/N` passes the flag through to the runner
+3. `tools/merge-mutation-reports.ts --out <path> <report>...` combines shard reports and fails when a shard is missing or a mutant appears twice
+4. CI runs four shards and gates the merged report in `test:mutation:changed`
+
 changed file sources:
 
 1. `--files file1,file2`
